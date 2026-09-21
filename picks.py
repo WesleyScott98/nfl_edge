@@ -260,4 +260,9 @@ def show(out, per_cat=5):
     else:
         tl = out["teaser_legs"]
         q = tl[tl["historically_validated"]] if len(tl) else tl
-        print("  no 2-team combo this slate" + (f"; qualifying legs: {', '.join(q['leg'] + ' (' + q['p_leg'].astype(str) + ')')}" if len(q) else ""))
+        if len(q):
+            q = q.assign(tag=np.where(q["p_leg"] > q["breakeven_leg"], "above", "BELOW"))
+            print("  no 2-team combo this slate; legs in the +1.5..+2.5 range: " + ", ".join(
+                q["leg"] + " (" + q["p_leg"].astype(str) + ", " + q["tag"] + " breakeven " + q["breakeven_leg"].astype(str) + ")"))
+        else:
+            print("  no legs in the +1.5..+2.5 underdog range this slate")

@@ -27,6 +27,10 @@ class Model:
         self.info = data.player_info()
         self.sched = data.schedules(season)
         self.inj = data.injuries(season)
+        try:
+            self.rost = data.roster_status(season)
+        except Exception:
+            self.rost = None
         self._wx_text = self.pbp.groupby("game_id")["weather"].first().to_dict()
         self._cache = {}
 
@@ -46,6 +50,24 @@ class Model:
     def game_row(self, away, home, week):
         g = self.sched[(self.sched["week"] == week) & (self.sched["home_team"] == home) & (self.sched["away_team"] == away)]
         return g.iloc[0] if len(g) else None
+
+    UNAVAILABLE = {"RES", "EXE", "SUS", "CUT", "RET", "DEV"}
+
+    def unavailable(self, week, usage):
+        """Players the model would otherwise project but who can't play: latest official roster
+        status (before this week) is IR / exempt / suspended / released / retired / practice squad,
+        or they're now on a different team. Game-day inactives (INA) are NOT carried forward."""
+        if self.rost is None or self.rost.empty:
+            return set()
+        r = self.rost[self.rost["week"] <= max(week - 1, 1)]
+        if r.empty:
+            return set()
+        latest = r.sort_values("week").groupby("gsis_id").last()
+        bad = set(latest.index[latest["status"].isin(self.UNAVAILABLE)])
+        team_now = latest["team"]
+        u = usage.set_index("pid")["team"]
+        moved = {pid for pid, t in u.items() if pid in team_now.index and team_now[pid] != t}
+        return bad | moved
 
     def weather_for(self, g, home):
         if g is None:
@@ -85,6 +107,7 @@ class Model:
         if total is None:
             total = float(g["total_line"]) if g is not None else 44.0
         outs = F.injury_outs(self.inj, self.season, week) if use_injury_report else set()
+        outs = outs | self.unavailable(week, usage)
         wx = self.weather_for(g, home) if weather == "auto" else weather
 
         # questionable players -> probability of playing

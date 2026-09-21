@@ -165,4 +165,4 @@ def report(df=None, n_boot=2000, seed=0):
         clv = c["close_price"].map(implied_prob) - c["price"].map(implied_prob)
         out["avg_clv_pct_pts"] = round(100 * clv.mean(), 2)
         out["share_beat_close"] = round((clv > 0).mean(), 3)
-    return out
+    return {k: (float(v) if isinstance(v, (np.floating, np.integer)) else v) for k, v in out.items()}

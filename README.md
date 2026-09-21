@@ -23,6 +23,9 @@ python run_game.py --away GB --home CHI --week 3 --questionable "D.J. Moore=0.8"
 ## What the model accounts for
 - **This season vs last:** 2026 plays count fully; prior seasons fade as games are played
   (`PRIOR_SEASON_K`). Player usage is recency-weighted (half-life 4 games).
+- **Roster status:** before every simulation, players whose latest official weekly roster status is
+  injured reserve, commissioner exempt, suspended, released, retired or practice squad — or who
+  are now on a different team — are removed automatically (e.g. Josh Jacobs, exempt list, 2026).
 - **Injuries:** Out/Doubtful from the official report (Doubtful players played 0 of 104 times in
   2024-25) are removed and their volume redistributed. **Questionable** players are simulated as
   playing 56% of the time (measured, 2024-25) — override with news, e.g. `questionable={"Puka Nacua": 0.85}`.

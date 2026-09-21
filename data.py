@@ -162,3 +162,10 @@ def weather_from_schedule(g, pbp_weather_text=None):
     import re
     return {"outdoor": outdoor, "temp": g.get("temp"), "wind": g.get("wind") if pd.notna(g.get("wind")) else 0,
             "precip": bool(re.search(PRECIP_WORDS, txt))}
+
+
+def roster_status(season):
+    """Weekly official roster status: ACT active, RES injured reserve, EXE commissioner exempt,
+    SUS suspended, CUT released, RET retired, DEV practice squad, INA game-day inactive."""
+    df = _cached("rostw", season, nfl.load_rosters_weekly)
+    return df[["season", "week", "team", "gsis_id", "full_name", "status"]]
