@@ -15,6 +15,8 @@ What each category can and can't do (see README for the tests behind this):
     main line.
   * Teasers: 6-pt legs on +1.5..+2.5 underdogs (76.5% in 2021-25) when the price clears breakeven.
   * Player props / anytime TD / alt ladders: calibrated simulation (validated 2024 + 2025).
+  * show(out, mode="best") ranks the top plays in every category whether or not they clear the
+    edge bar, tiered VALUE / lean / thin. mode="value" shows only bets that clear it.
   * SGPs: correlation-aware joint probabilities; you must compare the fair price to FanDuel's quote.
   * Cross-game parlays: only of legs that are +EV on their own.
 """
@@ -243,13 +245,63 @@ def run_slate(model, week, games=None, manual=None, out_names=(), questionable=N
             "teaser_legs": tl, "teasers": teaser_combos(tl, teaser_price) if len(tl) else pd.DataFrame()}
 
 
-def show(out, per_cat=5):
-    cols = ["game", "selection", "price", "p_final", "breakeven", "edge", "ev", "kelly_pct"]
-    b = out["best_singles"]
+def log_week(out, season, week):
+    """Save this week's full priced board for later model-vs-market analysis."""
+    import tracking as T
+    return T.log_board(out["all_priced"], season, week)
+
+
+def tier(row):
+    """Value = beats break-even by MIN_EDGE after deferring to the market; Lean = positive but
+    thin; Thin = the model rates it below the price (best of a bad board)."""
+    if row["edge"] >= C.MIN_EDGE and row["ev"] > 0:
+        return "VALUE"
+    if row["ev"] > 0:
+        return "lean"
+    return "thin"
+
+
+def best_available(out, per_cat=5):
+    """Top-rated plays per category regardless of the edge threshold, tiered."""
+    s = out["all_priced"].copy()
+    if s.empty:
+        return s
+    s["tier"] = s.apply(tier, axis=1)
+    return s.sort_values("ev", ascending=False).groupby("category", observed=True).head(per_cat)
+
+
+def best_bets(out, top=8, min_prob=0.55, min_price=-300):
+    """Two ranked views of the same board:
+      value      — best price vs the model, highest EV first (what profits long-run)
+      confidence — most likely to WIN at a sane price, highest probability first
+    Both carry the tier label so you can see what you're taking."""
+    s = out["all_priced"].copy()
+    if s.empty:
+        return {"value": s, "confidence": s}
+    s["tier"] = s.apply(tier, axis=1)
+    value = s.sort_values("ev", ascending=False).head(top)
+    conf = s[(s["p_final"] >= min_prob) & (s["price"] >= min_price)].sort_values("p_final", ascending=False).head(top)
+    return {"value": value, "confidence": conf}
+
+
+def show(out, per_cat=5, mode="best"):
+    """mode="best": top plays in every category, tiered (VALUE / lean / thin).
+       mode="value": only bets that clear the edge threshold."""
+    cols = ["game", "selection", "price", "p_final", "breakeven", "edge", "ev", "kelly_pct", "tier"]
+    if mode == "best":
+        bb = best_bets(out)
+        print("=== BEST VALUE (highest expected value — these are what profit long run) ===")
+        print(bb["value"][cols].to_string(index=False) if len(bb["value"]) else "  nothing priced")
+        print("\n=== MOST LIKELY (highest win probability at a reasonable price) ===")
+        print(bb["confidence"][cols].to_string(index=False) if len(bb["confidence"]) else "  nothing at 55%+ and better than -300")
+    b = best_available(out, per_cat) if mode == "best" else out["best_singles"].assign(tier="VALUE")
     for cat in ["Moneyline/Spread", "Totals", "Player props", "Anytime TD"]:
         x = b[b["category"] == cat] if len(b) else b
         print(f"\n=== {cat} ===")
-        print(x[cols].head(per_cat).to_string(index=False) if len(x) else "  no bet clears the edge threshold")
+        if len(x):
+            print(x[cols].head(per_cat).to_string(index=False))
+        else:
+            print("  nothing priced in this category")
     print("\n=== Same-game parlays (compare fair odds to FanDuel's SGP quote) ===")
     print(out["sgps"].drop(columns=["correlation_lift"]).to_string(index=False) if len(out["sgps"]) else "  none clear the value bar")
     print("\n=== Cross-game parlays (legs that are +EV on their own) ===")

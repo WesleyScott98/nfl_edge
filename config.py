@@ -9,19 +9,28 @@ BOOKMAKER = "fanduel"
 
 # ---- blending last season with this season -----------------------------
 # Prior-season plays get weight K / (K + games_played_this_season).
-# K=6 -> after 2 games a 2025 play counts 0.75 of a 2026 play; after 8 games, 0.43.
-PRIOR_SEASON_K = 6.0
+# K=2 (tuned on 2024+2025 weeks 2-5, confirmed neutral in weeks 12-18): after 2 games a prior-season
+# play counts 0.67 of a current one, after 8 games 0.20. Lower K adapts faster to role changes
+# (a player whose usage jumped this season) and beat K=4/6/12 on every market early in the year.
+PRIOR_SEASON_K = 2.0
 # Recency half-life (in games) for player usage shares.
 USAGE_HALF_LIFE_GAMES = 4.0
 # Injury-shortened / snap-limited games (a regular playing < 60% of his usual snaps):
 #   "drop"  -> ignore them;  "scale" -> keep them, scale shares up by (usual/actual snaps)^ALPHA
 #   (capped 2.5x) and down-weight the game by actual/usual snaps.
 SHORT_GAME_MODE = "scale"
+# Only treat a low-snap game as injury-shortened if the player was on that week's injury report
+# (or left the game hurt). Otherwise a low snap count is simply that player's role.
+SHORT_GAME_NEEDS_INJURY = True
 SHORT_GAME_ALPHA = 0.5
 # Games with a player's PREVIOUS team count at this weight (role info for new arrivals).
 PRIOR_TEAM_WEIGHT = 0.5
 # Shares shrink toward a position prior with this many pseudo-games (tames one-game samples).
 SHARE_PRIOR_GAMES = 1.0
+# Per-position shrinkage. QB carry share is highly individual (a runner vs a pocket passer), so
+# shrinking it toward a league prior compressed rushing projections badly: pocket QBs were
+# projected 13.9 yds against an actual 1.7, runners 27.5 against an actual 45.8 (2025).
+SHARE_PRIOR_GAMES_BY_POS = {}   # tested QB=0.15: made QB rushing worse, reverted
 SHARE_PRIORS = {"WR": (0.10, 0.0), "TE": (0.08, 0.0), "RB": (0.06, 0.25), "QB": (0.0, 0.06)}  # (target, carry)
 
 # ---- empirical-Bayes shrinkage (pseudo-counts toward position mean) -----
@@ -95,3 +104,8 @@ QB_EXIT_FRAC = (0.05, 0.75)
 # Empirical beat normal on ML and alt-spread Brier out of sample (2021-25, trained 2003-20).
 MARGIN_MODEL = "empirical"
 TEASER_DOG_RANGE = (1.5, 2.5)     # 6-pt teaser legs that still clear breakeven in 2021-25 (76.5%)
+
+# QB rushing: the simulation compresses QBs toward the average (pocket passers projected 13.9 yds
+# vs 1.7 actual; runners 27.5 vs 45.8, 2025). A QB's own recent rushing average was more accurate
+# (MAE 12.7 vs 13.4, bias -0.1 vs +3.8), so the QB's rushing is blended toward it.
+QB_RUSH_TRAIL_WEIGHT = 0.75   # tuned: best Brier, QB rush MAE 13.55 -> 12.43

@@ -237,9 +237,18 @@ def simulate_game(home, away, spread_home, total, tp, usage_home, usage_away, qb
                 "completions": np.zeros(n),
             }
             res.meta[nm] = {"team": team, "pos": u.loc[i, "pos"], "pid": u.loc[i, "pid"]}
-        qb_name = u.loc[u["pid"] == qb, "full_name"]
+        qb_row = u[u["pid"] == qb]
+        qb_name = qb_row["full_name"]
         if len(qb_name):
             q = res.players[qb_name.iloc[0]]
+            # blend the QB's rushing toward his own recent per-game average (see config)
+            trail = float(qb_row["trail_rush"].iloc[0]) if "trail_rush" in qb_row.columns else np.nan
+            mu = float(np.mean(q["rush_yds"]))
+            if trail == trail and mu > 1:
+                w = C.QB_RUSH_TRAIL_WEIGHT
+                scale = ((1 - w) * mu + w * max(trail, 0)) / mu
+                q["rush_yds"] = q["rush_yds"] * scale
+                q["carries"] = np.round(q["carries"] * scale)
             # starter plays the whole game unless an early exit is drawn
             exit_ = rng.random(n) < C.P_QB_EXIT
             frac = np.where(exit_, rng.uniform(*C.QB_EXIT_FRAC, n), 1.0)

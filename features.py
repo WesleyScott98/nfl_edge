@@ -46,7 +46,7 @@ def _shrink(value, n, prior, k):
 def team_profiles(pbp: pd.DataFrame, season: int, week: int) -> pd.DataFrame:
     df = _cutoff(pbp, season, week)
     df = df[(df["pass"] == 1) | (df["rush"] == 1)].copy()
-    df = df[df["two_point_attempt"] != 1]
+    df = df[(df["two_point_attempt"] != 1) & (df.get("qb_kneel", 0) != 1) & (df.get("qb_spike", 0) != 1)]
     df["w"] = _season_weight(df, season, week)
     df["pass_play"] = ((df["pass_attempt"] == 1) | (df["sack"] == 1)).astype(float)  # scrambles count as runs
     df["neutral"] = (df["wp"].between(0.2, 0.8) & (df["down"] <= 3) &
@@ -148,9 +148,10 @@ def team_profiles(pbp: pd.DataFrame, season: int, week: int) -> pd.DataFrame:
 # player usage
 # ----------------------------------------------------------------------------
 def player_usage(pbp: pd.DataFrame, snaps: pd.DataFrame, season: int, week: int,
-                 info: pd.DataFrame = None) -> pd.DataFrame:
+                 info: pd.DataFrame = None, inj: pd.DataFrame = None) -> pd.DataFrame:
     df = _cutoff(pbp, season, week)
-    df = df[((df["pass"] == 1) | (df["rush"] == 1)) & (df["two_point_attempt"] != 1)].copy()
+    df = df[((df["pass"] == 1) | (df["rush"] == 1)) & (df["two_point_attempt"] != 1)
+            & (df.get("qb_kneel", 0) != 1) & (df.get("qb_spike", 0) != 1)].copy()
     df["is_tgt"] = ((df["pass_attempt"] == 1) & (df["sack"] != 1) & df["receiver_player_id"].notna())
     df["is_car"] = (df["rush_attempt"] == 1) & df["rusher_player_id"].notna()
     df["rz"] = df["yardline_100"] <= 20
@@ -199,6 +200,10 @@ def player_usage(pbp: pd.DataFrame, snaps: pd.DataFrame, season: int, week: int,
     # drop them. If a player is on a snap limit this week, use snap_override in active_usage().
     med = pg.groupby("pid")["offense_pct"].transform("median")
     short = (med >= 0.5) & (pg["offense_pct"] < 0.6 * med)
+    if C.SHORT_GAME_NEEDS_INJURY and inj is not None and len(inj):
+        hurt = set(zip(inj["season"], inj["week"], inj["gsis_id"]))
+        on_report = pd.Series([(s, w, p) in hurt for s, w, p in zip(pg["season"], pg["week"], pg["pid"])], index=pg.index)
+        short = short & on_report
     if C.SHORT_GAME_MODE == "drop":
         pg = pg[~short]
         pg["short_scale"], pg["short_w"] = 1.0, 1.0
@@ -254,17 +259,18 @@ def player_usage(pbp: pd.DataFrame, snaps: pd.DataFrame, season: int, week: int,
     pg["s_rz"], pg["s_gl"] = share("rz_tgt", "team_rz_tgt", "s_rz"), share("gl_car", "team_gl_car", "s_gl")
     pg["s_air"] = share("air", "team_air", "s_air")
     pg["w_snap"] = pg["offense_pct"] * pg["w"]
+    pg["w_rush_yds"] = pg["rush_yds"] * pg["w"]      # recency-weighted rushing yards per game
 
     agg = pg.groupby("pid").agg(
         name=("name", "last"), team=("posteam", "last"), w=("w", "sum"), games=("w", "size"),
         w_max=("w", "max"),
         s_tgt=("s_tgt", "sum"), s_car=("s_car", "sum"), s_rz=("s_rz", "sum"), s_gl=("s_gl", "sum"),
-        s_air=("s_air", "sum"), snap=("w_snap", "sum"),
+        s_air=("s_air", "sum"), snap=("w_snap", "sum"), trail_rush=("w_rush_yds", "sum"),
         tgt=("tgt", "sum"), rec=("rec", "sum"), rec_yds=("rec_yds", "sum"), car=("car", "sum"),
         rush_yds=("rush_yds", "sum"), tgt_man=("tgt_man", "sum"), yds_man=("yds_man", "sum"),
         tgt_zone=("tgt_zone", "sum"), yds_zone=("yds_zone", "sum"),
     )
-    for c in ["s_tgt", "s_car", "s_rz", "s_gl", "s_air", "snap"]:
+    for c in ["s_tgt", "s_car", "s_rz", "s_gl", "s_air", "snap", "trail_rush"]:
         agg[c] = agg[c] / agg["w"]
     agg["neff"] = agg["w"] / agg["w_max"].clip(lower=1e-9)
     agg = agg[(agg["tgt"] + agg["car"]) > 0]
@@ -281,7 +287,7 @@ def player_usage(pbp: pd.DataFrame, snaps: pd.DataFrame, season: int, week: int,
     agg["pos"] = agg["pos"].where(agg["pos"].isin(LEAGUE_POS), "WR")
 
     # shrink shares toward a position prior (neff = effective number of games)
-    k = C.SHARE_PRIOR_GAMES
+    k = agg["pos"].map(lambda p: getattr(C, "SHARE_PRIOR_GAMES_BY_POS", {}).get(p, C.SHARE_PRIOR_GAMES))
     pt = agg["pos"].map(lambda p: C.SHARE_PRIORS.get(p, (0.08, 0.0))[0])
     pc = agg["pos"].map(lambda p: C.SHARE_PRIORS.get(p, (0.08, 0.0))[1])
     for c, prior in [("s_tgt", pt), ("s_rz", pt), ("s_car", pc), ("s_gl", pc)]:

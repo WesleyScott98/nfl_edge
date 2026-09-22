@@ -23,6 +23,7 @@ m = Model(a.season)
 games = [tuple(g.split("@")) for g in a.games] if a.games else None
 q = {kv.split("=")[0]: float(kv.split("=")[1]) for kv in a.questionable}
 out = picks.run_slate(m, a.week, games=games, out_names=a.out, questionable=q, teaser_price=a.teaser_price)
-picks.show(out)
+picks.show(out, mode="best")
+picks.log_week(out, a.season, a.week)      # save the board for model-vs-market study
 if a.csv:
     out["all_priced"].drop(columns=["leg"]).to_csv(a.csv, index=False)

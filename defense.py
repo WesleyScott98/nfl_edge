@@ -41,6 +41,9 @@ _COLS = ["season", "week", "game_id", "posteam", "defteam", "pass", "rush", "two
 def _plays(pbp, season, week):
     df = _cutoff(pbp[[c for c in _COLS if c in pbp.columns]], season, week)
     df = df[((df["pass"] == 1) | (df["rush"] == 1)) & (df["two_point_attempt"] != 1)].copy()
+    for c in ("qb_kneel", "qb_spike"):
+        if c in df.columns:
+            df = df[df[c] != 1]
     df["w"] = _season_weight(df, season, week)
     df["pass_play"] = (df["pass_attempt"] == 1) | (df["sack"] == 1)
     df["is_tgt"] = (df["pass_attempt"] == 1) & (df["sack"] != 1) & df["receiver_player_id"].notna()

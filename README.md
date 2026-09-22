@@ -74,7 +74,7 @@ explicitly (`P_QB_EXIT`) fixed the bias late in 2025 but not early, and didn't i
 *whether he finishes*, which is why it stays out of the bet finder.
 
 ## Injury-shortened / snap-limited games
-A regular who plays < 60% of his usual snaps (hurt mid-game, or on a pitch count returning from
+A regular who plays < 60% of his usual snaps **and is on that week's injury report** (hurt mid-game, or on a pitch count returning from
 injury) used to have that game dropped, which discarded real evidence (e.g. 9 targets on 52% of
 snaps). Now the game is kept, shares are scaled up by (usual/actual snaps)^0.5 and the game is
 down-weighted. Tested on 2025: better overall (-0.00009 Brier, not significant alone) and clearly
@@ -121,8 +121,42 @@ One run prices every FanDuel market for every game and returns: best singles by 
 | SGPs | joint probability from the simulation (correlation included) | shown with fair odds and the minimum FanDuel price to bet; FanDuel's SGP quote isn't in the API, so compare in the app |
 | cross-game parlays | product of legs that are +EV on their own, one per game | FanDuel pays the straight product, so EV is exact given the leg probabilities |
 
-A bet is flagged only if, after deferring 65% to the market, it still beats break-even by 3+ points.
-Most slates will produce only a handful of flagged singles — that is the point.
+`show(out, mode="best")` prints two ranked boards first — **BEST VALUE** (highest EV; what profits
+long run) and **MOST LIKELY** (highest win probability at a price better than -300) — then ranks the top plays in every category whether or not they clear
+the edge bar, tiered: **VALUE** (beats break-even by 3+ pts after deferring to the market),
+**lean** (positive but thin), **thin** (the model rates it below the price — best of a weak board).
+`mode="value"` shows only bets that clear the bar. Over a season only VALUE bets are expected to
+profit; the rest are ranked for when you want action anyway, and should be staked smaller.
+
+### Tuning notes (Week 2 2026)
+**QB rushing** was compressed toward the average (pocket passers projected 13.9 yds vs 1.7 actual;
+runners 27.5 vs 45.8). The QB's own recent per-game rushing was more accurate, so his rushing is
+blended 75% toward it (`QB_RUSH_TRAIL_WEIGHT`). This is the only change so far whose 95% CI
+excludes zero: Brier -0.00018 [-0.00029, -0.00010] across all markets; QB rush MAE 13.6 -> 12.4.
+Kneel-downs and spikes are now excluded from usage and team volume. Reducing QB share shrinkage
+was tested and made things worse — reverted.
+
+
+`PRIOR_SEASON_K` was cut from 6 to 2 after testing weeks 2-5 of 2024 and 2025: weighting last
+season less improved every market early in the year (mean Brier 0.1348 -> 0.1338, consistent in
+both seasons) and was neutral in weeks 12-18. This makes the model adapt faster to role changes —
+the failure that produced the Ferguson/Parkinson miss.
+
+### What could NOT be fixed
+Terrance Ferguson had 0 targets in Week 1 2026 and 25 all of 2025, then drew 9 targets and the TD
+in Week 2. The official depth chart listed him TE3 behind Parkinson (TE1) and Higbee (TE2), so a
+depth-chart prior would have made the projection worse. The market had him at a shorter price than
+Parkinson — information no available statistic contained. This is the case `boards.csv` exists to
+study.
+
+## Calibrating trust in the market (open question)
+The engine defers 65% to the market (`MODEL_WEIGHT`) because we have no history of sportsbook prop
+lines to tune it against. `picks.log_week(out, season, week)` now saves every priced line plus the
+model's probability to `boards.csv`; `tracking.board_review()` then scores who was right when the
+two disagreed, bucketed by the size of the disagreement. After ~6-8 weeks that answers: should the
+model be trusted more, less, or only for players with a large sample (`neff`)?
+Week 2 2026 case that motivated this: the model had Parkinson 37% / Ferguson 12% to score while the
+market had Ferguson shorter; Ferguson drew 9 targets and scored, Parkinson drew 2.
 
 ## Weekly workflow
 1. Update lines: pass live FanDuel spread/total (or use `--props` to pull everything).
@@ -155,9 +189,9 @@ predicting the base rate at that line.
 
 | market | Brier skill | notes |
 |---|---|---|
-| receptions | 30% | reliable (final holdout calibrated Brier, all markets: 0.1180) |
+| receptions | 31% | reliable (2025 scored with calibration fit only on 2024: mean Brier 0.1203) |
 | receiving yards | 27% | reliable |
-| rushing yards | 31% | slight over-projection (~4 yds) |
+| rushing yards | 33% | slight over-projection (~4 yds) |
 | anytime TD | 12% | TDs are noisy for everyone |
 | QB passing yards | 9% | see section below — **excluded from best_bets()** |
 
