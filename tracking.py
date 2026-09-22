@@ -75,8 +75,11 @@ def _leg_result(leg, stats, played, sched_row):
         key = _norm(leg["player"])
         row = stats[stats["_n"] == key]
         if row.empty:
-            return "void" if key not in played else None
-        r = row.iloc[0]
+            if key not in played:
+                return "void"                      # didn't take a snap -> book voids the leg
+            r = pd.Series(dtype=float)             # played but recorded nothing -> zeros count
+        else:
+            r = row.iloc[0]
         if leg["stat"] == "anytime_td":
             val = r.get("rushing_tds", 0) + r.get("receiving_tds", 0)
             line = leg.get("line", 0.5)
@@ -166,3 +169,61 @@ def report(df=None, n_boot=2000, seed=0):
         out["avg_clv_pct_pts"] = round(100 * clv.mean(), 2)
         out["share_beat_close"] = round((clv > 0).mean(), 3)
     return {k: (float(v) if isinstance(v, (np.floating, np.integer)) else v) for k, v in out.items()}
+
+
+BOARD_PATH = os.environ.get("NFL_EDGE_BOARD", os.path.join(os.path.dirname(__file__), "boards.csv"))
+
+
+def log_board(priced, season, week):
+    """Save the whole priced board (every FanDuel line + the model's probability) for a week.
+
+    Why: we have no history of sportsbook prop lines, so we can't yet test questions like
+    "when the model disagrees with the market by 10+ points, who is right?" or tune how much to
+    defer to the market (MODEL_WEIGHT). Logging every board builds that dataset week by week.
+    After ~6-8 weeks, run the analysis in README ('Calibrating trust in the market')."""
+    df = priced.drop(columns=[c for c in ["leg"] if c in priced.columns]).copy()
+    df.insert(0, "season", season)
+    df.insert(1, "week", week)
+    df.insert(2, "logged_at", datetime.now(timezone.utc).isoformat(timespec="seconds"))
+    header = not os.path.exists(BOARD_PATH)
+    df.to_csv(BOARD_PATH, mode="a", header=header, index=False)
+    return len(df)
+
+
+def board_review(season=None):
+    """Once boards.csv has a few weeks and results exist, score the model against the market:
+    on lines where they disagreed, who was closer? Returns hit rates by disagreement size."""
+    if not os.path.exists(BOARD_PATH):
+        return pd.DataFrame()
+    b = pd.read_csv(BOARD_PATH)
+    if season:
+        b = b[b["season"] == season]
+    rows = []
+    for (season_, week), grp in b.groupby(["season", "week"]):
+        try:
+            ps = data.player_stats([int(season_)])
+        except Exception:
+            continue
+        st = ps[ps["week"] == week].copy()
+        if st.empty:
+            continue
+        st["_n"] = st["player_display_name"].map(_norm)
+        sn = data.snaps([int(season_)])
+        info = data.player_info().set_index("gsis_id")["display_name"]
+        played = {_norm(info.get(i, "")) for i in sn[(sn["week"] == week) & (sn["offense_snaps"] > 0)]["gsis_id"]}
+        for _, r in grp.iterrows():
+            if "player" not in str(r.get("selection", "")) and pd.isna(r.get("player", np.nan)):
+                continue
+            leg = {"player": r.get("player"), "stat": r.get("stat"), "line": r.get("line"), "side": r.get("side", "over")}
+            if not leg["player"] or leg["stat"] not in STAT_COL and leg["stat"] != "anytime_td":
+                continue
+            res = _leg_result(leg, st, played, None)
+            if res in (None, "void", "push"):
+                continue
+            rows.append({"disagreement": round(r["p_model"] - r["p_market"], 3), "model_higher": r["p_model"] > r["p_market"],
+                         "won": res == "win"})
+    d = pd.DataFrame(rows)
+    if d.empty:
+        return d
+    d["bucket"] = pd.cut(d["disagreement"].abs(), [0, .05, .10, .15, 1.0])
+    return d.groupby(["bucket", "model_higher"], observed=True).agg(n=("won", "size"), hit_rate=("won", "mean")).round(3)

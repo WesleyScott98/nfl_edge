@@ -27,6 +27,7 @@ class Model:
         self.info = data.player_info()
         self.sched = data.schedules(season)
         self.inj = data.injuries(season)
+        self.inj_all = pd.concat([data.injuries(s) for s in seasons], ignore_index=True)
         try:
             self.rost = data.roster_status(season)
         except Exception:
