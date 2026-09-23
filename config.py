@@ -64,6 +64,9 @@ CATCH_RATE_SD = 0.06       # per-game noise in a receiver's catch rate  # yards 
 # p_final = MODEL_WEIGHT * p_model + (1 - MODEL_WEIGHT) * p_market_fair
 MODEL_WEIGHT = 0.35
 ONE_SIDED_MARGIN = {"anytime_td": 0.08, "alt": 0.06}  # assumed vig when no opposing side is posted
+# Heavy chalk is a poor single bet however likely it is: -800 risks 8 units to win 1. Singles
+# shorter than this are hidden (parlay legs are exempt — combining them is what pays).
+MIN_PRICE_AMERICAN = -350
 MIN_EDGE = 0.03            # flag only if blended prob beats break-even by >= 3 pts
 KELLY_FRACTION = 0.25
 KELLY_CAP = 0.02           # never suggest more than 2% of bankroll on one bet

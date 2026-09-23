@@ -238,7 +238,8 @@ def run_slate(model, week, games=None, manual=None, out_names=(), questionable=N
         tlegs.append(teaser_legs(sim, gm, game, teaser_price))
     singles = pd.concat(all_singles, ignore_index=True) if all_singles else pd.DataFrame()
     tl = pd.concat(tlegs, ignore_index=True) if tlegs else pd.DataFrame()
-    best = singles[(singles["edge"] >= C.MIN_EDGE) & (singles["ev"] > 0)].sort_values("ev", ascending=False) if len(singles) else singles
+    best = singles[(singles["edge"] >= C.MIN_EDGE) & (singles["ev"] > 0)
+                   & (singles["price"] >= C.MIN_PRICE_AMERICAN)].sort_values("ev", ascending=False) if len(singles) else singles
     return {"best_singles": best, "all_priced": singles,
             "sgps": pd.concat(sgps, ignore_index=True) if sgps else pd.DataFrame(),
             "parlays": build_parlays(singles) if len(singles) else pd.DataFrame(),
@@ -261,16 +262,19 @@ def tier(row):
     return "thin"
 
 
-def best_available(out, per_cat=5):
-    """Top-rated plays per category regardless of the edge threshold, tiered."""
+def best_available(out, per_cat=5, min_price=None):
+    """Top-rated plays per category regardless of the edge threshold, tiered.
+    Singles priced shorter than MIN_PRICE_AMERICAN are dropped — too much risk per unit won."""
     s = out["all_priced"].copy()
     if s.empty:
         return s
+    floor = C.MIN_PRICE_AMERICAN if min_price is None else min_price
+    s = s[s["price"] >= floor]
     s["tier"] = s.apply(tier, axis=1)
     return s.sort_values("ev", ascending=False).groupby("category", observed=True).head(per_cat)
 
 
-def best_bets(out, top=8, min_prob=0.55, min_price=-300):
+def best_bets(out, top=8, min_prob=0.55, min_price=C.MIN_PRICE_AMERICAN):
     """Two ranked views of the same board:
       value      — best price vs the model, highest EV first (what profits long-run)
       confidence — most likely to WIN at a sane price, highest probability first

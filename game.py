@@ -68,7 +68,15 @@ class Model:
         team_now = latest["team"]
         u = usage.set_index("pid")["team"]
         moved = {pid for pid, t in u.items() if pid in team_now.index and team_now[pid] != t}
-        return bad | moved
+        # Not on ANY roster this season = free agent, retired or unsigned. These have no status to
+        # be "bad", so they used to slip through and get projected off an older season's usage.
+        last_wk = r["week"].max()
+        current = r[r["week"] == last_wk]
+        unsigned = set()
+        if len(current) > 1200:                     # only trust a fully populated roster week
+            on_roster = set(current["gsis_id"].dropna())
+            unsigned = {pid for pid in u.index if pid not in on_roster}
+        return bad | moved | unsigned
 
     def weather_for(self, g, home):
         if g is None:
