@@ -30,7 +30,7 @@ import config as C
 import edge as E
 import odds as O
 from odds import american_to_decimal, decimal_to_american, devig_two_way, implied_prob
-from run_game import TEAM_NAMES
+from teams import TEAM_NAMES
 
 TEAM_ABBR = TEAM_NAMES
 SGP_MIN_VALUE = 1.10     # joint model prob must beat the market-implied joint prob by 10% (SGP holds are large)

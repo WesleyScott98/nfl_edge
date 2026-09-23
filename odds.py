@@ -47,9 +47,11 @@ def devig_two_way(p_over_raw, p_under_raw):
 
 # ---------------------------------------------------------------- API
 def _get(url, **params):
-    if not C.ODDS_API_KEY:
+    import os
+    key = C.ODDS_API_KEY or os.environ.get("ODDS_API_KEY")   # read at call time, not import time
+    if not key:
         raise RuntimeError("Set ODDS_API_KEY (free key at the-odds-api.com) or use manual_lines().")
-    r = requests.get(url, params={"apiKey": C.ODDS_API_KEY, "regions": "us", "oddsFormat": "american",
+    r = requests.get(url, params={"apiKey": key, "regions": "us", "oddsFormat": "american",
                                   "bookmakers": C.BOOKMAKER, **params}, timeout=20)
     r.raise_for_status()
     print(f"[odds-api] credits remaining: {r.headers.get('x-requests-remaining')}")
