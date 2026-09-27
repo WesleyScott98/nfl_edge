@@ -161,7 +161,11 @@ def simulate_game(home, away, spread_home, total, tp, usage_home, usage_away, qb
               + C.SCRIPT_PASS_BETA * (-own_margin) / 14.0 + wx_pr)
         pr = np.clip(pr, 0.30, 0.80)
         pass_plays = rng.binomial(plays, pr)
-        sacks = rng.binomial(pass_plays, T.sack_rate)
+        ol_lost = float(T.get("ol_missing", 0.0) or 0.0) if hasattr(T, "get") else 0.0
+        ol_ypc = max(1 - min(C.OL_INJURY_YPC * ol_lost, C.OL_INJURY_CAP), 0.75) if ol_lost else 1.0
+        ol_ypr = max(1 - min(C.OL_INJURY_YPR * ol_lost, C.OL_INJURY_CAP), 0.85) if ol_lost else 1.0
+        sack_rate = T.sack_rate * (1 + min(C.OL_INJURY_SACK * ol_lost, 0.6)) if ol_lost else T.sack_rate
+        sacks = rng.binomial(pass_plays, min(sack_rate, 0.25))
         att = pass_plays - sacks
         rushes = plays - pass_plays
         eff = np.clip(((pts[team] + 7) / (exp_pts[team] + 7)) ** C.EFFICIENCY_POINTS_ELASTICITY, 0.6, 1.6)
@@ -206,7 +210,7 @@ def simulate_game(home, away, spread_home, total, tp, usage_home, usage_away, qb
         car_p = car_p / car_p.sum()
         carries = rng.multinomial(rushes, rng.dirichlet(car_p * C.CARRY_SHARE_CONC, n))
         run_f = d_ypc
-        ypc = np.append(u["ypc"].values, OTHER_RUSH_YPC) * run_f
+        ypc = np.append(u["ypc"].values, OTHER_RUSH_YPC) * run_f * ol_ypc
         rush_yds = (carries * ypc * np.sqrt(eff)[:, None]
                     + np.sqrt(carries) * C.RUSH_SD_PER_CARRY * _t_noise(rng, carries.shape, C.RUSH_T_DF))
         rush_yds = np.where(carries > 0, rush_yds, 0.0)
@@ -241,6 +245,8 @@ def simulate_game(home, away, spread_home, total, tp, usage_home, usage_away, qb
         pass_yds_team = rec_yds.sum(axis=1)
         for i, nm in enumerate(names):
             res.players[nm] = {
+                "td_count": (rec_td[:, i] + rsh_td[:, i]).astype(float),
+                "first_td": np.zeros(n),
                 "targets": targets[:, i], "receptions": rec[:, i], "rec_yds": rec_yds[:, i],
                 "carries": carries[:, i], "rush_yds": rush_yds[:, i],
                 "rush_rec_yds": rec_yds[:, i] + rush_yds[:, i],
@@ -270,6 +276,28 @@ def simulate_game(home, away, spread_home, total, tp, usage_home, usage_away, qb
             q["completions"] = np.round(rec.sum(axis=1) * frac)
             q["rush_yds"] = q["rush_yds"] * frac
             q["carries"] = np.round(q["carries"] * frac)
+    # ---- first touchdown scorer -------------------------------------------------------------
+    # Drive order isn't modelled, so this is an approximation: pick which team scores first in
+    # proportion to how many touchdowns each scored in that simulated game, then pick the scorer
+    # from that team's scorers. Good enough to rank candidates; not a precise timeline.
+    names_by_team = {}
+    for nm, meta in res.meta.items():
+        names_by_team.setdefault(meta["team"], []).append(nm)
+    teams = list(names_by_team)
+    if len(teams) == 2:
+        counts = {t: np.stack([res.players[nm]["td_count"] for nm in names_by_team[t]], axis=1)
+                  for t in teams}
+        totals = {t: counts[t].sum(axis=1) for t in teams}
+        both = totals[teams[0]] + totals[teams[1]]
+        u = rng.random(n)
+        first_is_a = np.where(both > 0, u < np.divide(totals[teams[0]], np.maximum(both, 1e-9)), False)
+        for ti, t in enumerate(teams):
+            mine = first_is_a if ti == 0 else (~first_is_a & (totals[t] > 0))
+            c = counts[t]
+            tot = np.maximum(c.sum(axis=1, keepdims=True), 1e-9)
+            pick = (np.cumsum(c / tot, axis=1) > rng.random(n)[:, None]).argmax(axis=1)
+            for j, nm in enumerate(names_by_team[t]):
+                res.players[nm]["first_td"] = np.where(mine & (pick == j) & (totals[t] > 0), 1.0, 0.0)
     return res
 
 

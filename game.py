@@ -35,7 +35,15 @@ class Model:
         self._wx_text = self.pbp.groupby("game_id")["weather"].first().to_dict()
         self._cache = {}
 
+    def set_starters(self, qb_map):
+        """{team: qb player id} for the whole slate. Set this once before simulating games so the
+        usage table is built a single time instead of once per matchup."""
+        self._starters = dict(qb_map or {})
+        self._cache.clear()
+
     def features(self, week, qb_map=None):
+        if qb_map is None:
+            qb_map = getattr(self, "_starters", None)
         key = (week, tuple(sorted((qb_map or {}).items())))
         if key not in self._cache:
             tp = F.team_profiles(self.pbp, self.season, week)
@@ -121,6 +129,29 @@ class Model:
                 d["def_ypt"] = d.get("def_ypt", 1.0) + min(C.DEF_INJURY_FRONT_YPT * lost, C.DEF_INJURY_CAP)
         return adj
 
+    def ol_injury_adjust(self, week, out_ids):
+        """{team: starter-equivalents of offensive line missing}, from each lineman's normal
+        share of offensive snaps."""
+        if not getattr(C, "AUTO_OL_ADJUST", False):
+            return {}
+        try:
+            ls = self.lsnaps
+        except AttributeError:
+            try:
+                self.lsnaps = ls = data.line_snaps(list(range(self.season - 1, self.season + 1)))
+            except Exception:
+                self.lsnaps = ls = None
+        if ls is None or ls.empty:
+            return {}
+        prior = ls[(ls["season"] == self.season) & (ls["week"] < week)]
+        if prior.empty:
+            prior = ls[ls["season"] == self.season - 1]
+        if prior.empty:
+            return {}
+        usual = prior.groupby(["team", "gsis_id"])["offense_pct"].mean().reset_index()
+        miss = usual[usual["gsis_id"].isin(out_ids)]
+        return {t: float(r["offense_pct"].sum()) for t, r in miss.groupby("team")}
+
     def weather_for(self, g, home):
         if g is None:
             return None
@@ -129,8 +160,9 @@ class Model:
             return obs
         return data.weather_forecast(home, g["gameday"], g["gametime"])
 
-    def _team_inputs(self, usage, team, week, outs, out_names, snap_override):
-        qb = F.primary_qb(self.pbp, team, self.season, week, outs, out_names)
+    def _team_inputs(self, usage, team, week, outs, out_names, snap_override, qb=None):
+        if qb is None:
+            qb = F.primary_qb(self.pbp, team, self.season, week, outs, out_names)
         u = F.active_usage(usage, team, outs, out_names, snap_override)
         u = u[(u["pos"] != "QB") | (u["pid"] == qb)]
         if qb is not None and qb not in set(u["pid"]):
@@ -168,6 +200,16 @@ class Model:
         if out_names:
             low = {n.lower() for n in out_names}
             outs = outs | set(usage.loc[usage["full_name"].str.lower().isin(low), "pid"])
+        ol_missing = self.ol_injury_adjust(week, outs)
+        if ol_missing:
+            tp = tp.copy(); tp.attrs = self.features(week)[0].attrs
+            if "ol_missing" not in tp.columns:
+                tp["ol_missing"] = 0.0
+            for t, lost in ol_missing.items():
+                if t in tp.index:
+                    tp.loc[t, "ol_missing"] = lost
+                    if t in (home, away):
+                        print(f"[o-line out] {t}: {lost:.2f} starter-equivalents missing")
         auto_def = self.def_injury_adjust(week, outs)
         if auto_def:
             tp = tp.copy(); tp.attrs = self.features(week)[0].attrs
@@ -204,16 +246,27 @@ class Model:
                 pid = F.primary_qb(self.pbp, t, self.season, week, outs, out_names)
                 if pid:
                     qb_ids[t] = pid
-        if qb_ids and getattr(C, "QB_CONTEXT_MATCH", 1) != 1:
+        known = getattr(self, "_starters", None)
+        if qb_ids and not known and getattr(C, "QB_CONTEXT_MATCH", 1) != 1:
+            # no slate-wide map set, so build this one matchup's context (slower; set_starters is better)
             tp2, usage2 = self.features(week, qb_ids)
             usage = usage2
             if not def_adjust and not auto_def:
                 tp = tp2
 
+        base_qb = {t: F.primary_qb(self.pbp, t, self.season, week, outs, out_names) for t in (home, away)}
+        qb_names_low = {}
+        for t, pid in base_qb.items():
+            row = usage[usage["pid"] == pid]
+            qb_names_low[t] = str(row["full_name"].iloc[0]).lower() if len(row) else None
+
         def run(extra_out, n_, seed_):
             ins = {}
+            extra_low = {str(x).lower() for x in extra_out}
             for t in (home, away):
-                u, q = self._team_inputs(usage, t, week, outs, list(out_names) + extra_out, snap_override)
+                pre = None if (qb_names_low[t] and qb_names_low[t] in extra_low) else base_qb[t]
+                u, q = self._team_inputs(usage, t, week, outs, list(out_names) + extra_out,
+                                         snap_override, pre)
                 # an announced starter (overrides.json "qb") beats whoever took the snaps last week
                 named = qb_named.get(t)
                 if named:

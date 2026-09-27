@@ -144,3 +144,27 @@ THIRD_DOWN_PLAYS_BETA = 4.0 # extra plays per game when a defense is poor on thi
 # full strength; the mechanism is sound and it never hurt either half.
 USE_RZ_DEFENSE = True
 RZ_STRENGTH = 1.0            # 1.0 = apply the opponent's full red-zone factor
+
+# ---- offensive line injuries. Missing linemen hurt the run game and pass protection, and the
+# betting total can't see a Wednesday line shuffle. Sized by judgement, then tested — see README.
+# Tested on 2025, both halves: the RUN-GAME effect held up (rushing Brier -0.0001 / -0.0007;
+# all markets -0.00002 / -0.00014, better in each half). The pass-protection effect made things
+# WORSE in both halves and is switched off — the betting total already prices a team throwing
+# behind a patched line, but it can't see the run game degrade.
+AUTO_OL_ADJUST = True
+OL_INJURY_YPC = 0.06          # rushing yards per carry, per starter-equivalent lineman missing
+OL_INJURY_YPR = 0.0           # tested and rejected
+OL_INJURY_SACK = 0.0          # tested and rejected
+OL_INJURY_CAP = 0.20
+
+# ---- when a lead runner is out, his carries don't spread evenly.
+# Measured over 2023-25: in the 181 games a clear lead back missed, the top backup took 72% of RB
+# carries (median 71%), the second 24%, and a near-even split happened in just 2% of games. The old
+# behaviour spread the vacated share proportionally, which produced the 2% case every time.
+# Tested on 2025: rushing Brier -0.0004 in one half but +0.0012 in the other, all markets mixed.
+# The concentration is real in the data, but the model can't tell WHICH backup wins the job, and
+# concentrating on the wrong one costs more than spreading. Off until it can be tied to the depth
+# chart or FanDuel's posted lines, which do know.
+CONCENTRATE_VACATED = False
+VACATED_THRESHOLD = 0.35      # only when the missing player(s) held at least this carry share
+VACATED_CONCENTRATION = [0.70, 0.22, 0.08]   # how the vacated share splits down the depth order
