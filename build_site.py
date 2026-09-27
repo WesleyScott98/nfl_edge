@@ -21,6 +21,7 @@ import pandas as pd
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # flat layout: all files in one folder
 import calibrate as K          # noqa: E402
 import inactives as IN         # noqa: E402
+import news as NEWS            # noqa: E402
 import edge as E               # noqa: E402
 from game import Model         # noqa: E402
 from odds import decimal_to_american  # noqa: E402
@@ -274,6 +275,11 @@ def build(season, week, n_sims=20000, overrides=([], {}, {}, {})):
     # live availability (Sleeper) closes the gap between Friday's report and kickoff
     cache = os.environ.get("NFL_EDGE_CACHE", "/tmp/nfl-cache")
     live_out, live_q = IN.availability(cache, m.features(week)[1])
+    # beat reporting: snap counts, game-time decisions and "ruled out" before the report says so
+    news_out, news_q, news_limits = NEWS.combined_news(cache, m.features(week)[1], week)
+    live_out = list(dict.fromkeys(list(live_out) + news_out))
+    live_q = {**live_q, **news_q}
+    snap_limit = {**news_limits, **(snap_limit or {})}      # your overrides still win
     # the depth chart names the starting QB when it disagrees with whoever took the snaps last week
     depth = IN.depth_starters(cache)
     for tm, roles in depth.items():
@@ -305,8 +311,18 @@ def build(season, week, n_sims=20000, overrides=([], {}, {}, {})):
     out = {"season": season, "week": week, "odds": bool(book),
            "generated": time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime()), "games": []}
     sched = m.sched[m.sched["week"] == week]
+    now = datetime.now(timezone.utc)
+    skipped_finished = []
     for g in sched.itertuples():
         if pd.isna(g.spread_line):
+            continue
+        # drop games that have already been played — a finished game's bets are noise
+        played = not pd.isna(getattr(g, "home_score", None))
+        kick = pd.to_datetime(f"{g.gameday} {g.gametime}", errors="coerce")
+        started_long_ago = (kick is not pd.NaT
+                            and (now.replace(tzinfo=None) - kick).total_seconds() > 4 * 3600)
+        if played or started_long_ago:
+            skipped_finished.append(f"{g.away_team}@{g.home_team}")
             continue
         bk = book.get(f"{g.away_team}@{g.home_team}", {"lines": {}, "props": {}})
         sp_line, tot_line = float(g.spread_line), float(g.total_line)
@@ -429,6 +445,8 @@ def build(season, week, n_sims=20000, overrides=([], {}, {}, {})):
         game["parlays"] = sorted(combos, key=lambda x: -x["prob"])[:6]
         out["games"].append(game)
         print(f"  {g.away_team}@{g.home_team}", flush=True)
+    if skipped_finished:
+        print(f"finished games left out: {', '.join(skipped_finished)}")
     if role_notes:
         print(f"[fanduel] {len(role_notes)} projections pulled toward the market "
               f"(the model had the player's role wrong):")
